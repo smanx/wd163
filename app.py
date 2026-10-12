@@ -303,24 +303,59 @@ def status_all():
     return result
 
 
-def tail_log(name, lines=200):
+def _trim_partial_utf8(data):
+    """去掉结尾可能被切断的多字节 UTF-8 字符，返回完整的前缀（字节串）。"""
+    if not data:
+        return data
+    p = len(data) - 1
+    while p >= 0 and (ord(data[p]) & 0xC0) == 0x80:   # 续字节 10xxxxxx
+        p -= 1
+    if p < 0:
+        return data
+    lead = ord(data[p])
+    if lead < 0x80:
+        need = 1
+    elif lead >= 0xF0:
+        need = 4
+    elif lead >= 0xE0:
+        need = 3
+    elif lead >= 0xC0:
+        need = 2
+    else:
+        need = 1
+    if p + need > len(data):
+        return data[:p]          # 字符被截断，丢弃，下次从字符边界继续
+    return data
+
+
+def read_log(name, offset):
+    """增量读取日志。
+    返回 (文本, 新偏移, reset)。
+    offset 为 None / 负数 / 大于文件大小（被截断）时，全量返回尾部 200 行并置 reset=True；
+    否则只返回 offset 之后的新增内容。"""
     svc = CONF.get(name)
     if svc is None:
-        return '(未知服务)'
+        return '(未知服务)', 0, True
     path = svc['log']
     if not os.path.isfile(path):
-        return '(暂无日志)'
+        return '(暂无日志)', 0, True
     try:
         with open(path, 'rb') as f:
             f.seek(0, os.SEEK_END)
             size = f.tell()
-            read_size = min(size, 512 * 1024)
-            f.seek(size - read_size)
-            data = f.read()
-        out = data.decode('utf-8', 'replace').splitlines()
-        return '\n'.join(out[-lines:])
+            if offset is None or offset < 0 or offset > size:
+                read_size = min(size, 512 * 1024)
+                f.seek(size - read_size)
+                text = '\n'.join(
+                    f.read().decode('utf-8', 'replace').splitlines()[-200:])
+                return text, size, True
+            if offset == size:
+                return '', size, False          # 无新增
+            f.seek(offset)
+            data = _trim_partial_utf8(f.read())
+            return data.decode('utf-8', 'replace'), offset + len(data), False
     except Exception as e:
-        return '(读取日志失败: %s)' % e
+        return '(读取日志失败: %s)' % e, offset or 0, True
 
 
 # ---------- 系统信息采集（读 /proc，零依赖） ----------
@@ -550,12 +585,16 @@ class Handler(BaseHTTPRequestHandler):
         elif path == '/api/log':
             qs = query_dict(self.path.partition('?')[2])
             name = qs.get('name', '')
-            try:
-                lines = int(qs.get('lines', '200'))
-            except ValueError:
-                lines = 200
-            self.send_json({'ok': True, 'name': name,
-                            'log': tail_log(name, min(max(lines, 1), 2000))})
+            if 'offset' in qs:
+                try:
+                    offset = int(qs['offset'])
+                except ValueError:
+                    offset = None
+            else:
+                offset = None
+            text, newoff, reset = read_log(name, offset)
+            self.send_json({'ok': True, 'name': name, 'log': text,
+                            'offset': newoff, 'reset': reset})
         else:
             self.send_json({'ok': False, 'error': 'not found'}, 404)
 
@@ -656,9 +695,13 @@ HTML = u"""<!DOCTYPE html>
   button.start { color: #15803d; border-color: #86efac; }
   button.stop  { color: #b91c1c; border-color: #fca5a5; }
   button:disabled { opacity: .45; cursor: not-allowed; }
-  .logbox { margin-top: 10px; background: #0b1021; color: #c9d1d9; font-family:
+  .logwrap { display: none; }
+  .logbar { margin-top: 10px; }
+  .logbar button { padding: 2px 10px; font-size: 12px; color: #2563eb;
+                   border-color: #bfdbfe; }
+  .logbox { margin-top: 6px; background: #0b1021; color: #c9d1d9; font-family:
             Consolas, monospace; font-size: 12px; border-radius: 8px; padding: 10px;
-            max-height: 260px; overflow: auto; white-space: pre-wrap; display: none; }
+            max-height: 260px; overflow: auto; white-space: pre-wrap; }
   .msg { position: fixed; right: 18px; top: 18px; background: #111827; color: #fff;
          padding: 10px 16px; border-radius: 8px; font-size: 13px; display: none;
          max-width: 420px; white-space: pre-wrap; z-index: 9; }
@@ -836,7 +879,8 @@ HTML = u"""<!DOCTYPE html>
 <div class="msg" id="msg"></div>
 <script>
 var SVC = {};
-var logOpen = {};
+var logState = {};   // name -> {open:bool, offset:int|null, pending:bool}
+var CARDS = {};      // name -> 卡片元素引用（一次构建，之后只原地更新）
 var PORTS = __PORTS__;
 var lastCpu = null;
 
@@ -874,46 +918,62 @@ function mkBtn(text, cls, fn, name) {
   return b;
 }
 
+function buildCard(s) {
+  var open = !!(logState[s.name] && logState[s.name].open);
+  var card = document.createElement('div');
+  card.className = 'card';
+
+  var head = document.createElement('div'); head.className = 'head';
+  var tl = document.createElement('span'); tl.className = 'title';
+  var dot = document.createElement('span'); dot.className = 'dot on';
+  tl.appendChild(dot);
+  tl.appendChild(document.createTextNode(s.title));
+  var st = document.createElement('span'); st.className = 'st';
+  head.appendChild(tl); head.appendChild(st);
+  card.appendChild(head);
+
+  if (s.deps && s.deps.length) {
+    var dep = document.createElement('div'); dep.className = 'dep';
+    dep.textContent = '依赖: ' + s.deps.join(', ');
+    card.appendChild(dep);
+  }
+
+  var btns = document.createElement('div'); btns.className = 'btns';
+  var bStart = mkBtn('启动', 'start', svcStart, s.name);
+  var bStop = mkBtn('停止', 'stop', svcStop, s.name);
+  var bLog = mkBtn(open ? '收起日志' : '查看日志', '', toggleLog, s.name);
+  btns.appendChild(bStart); btns.appendChild(bStop); btns.appendChild(bLog);
+  card.appendChild(btns);
+
+  var wrap = document.createElement('div'); wrap.className = 'logwrap';
+  wrap.style.display = open ? 'block' : 'none';
+  var bar = document.createElement('div'); bar.className = 'logbar';
+  bar.appendChild(mkBtn('复制日志', 'copy', copyLog, s.name));
+  var lb = document.createElement('div'); lb.className = 'logbox';
+  lb.id = 'log_' + s.name;
+  wrap.appendChild(bar); wrap.appendChild(lb);
+  card.appendChild(wrap);
+
+  return {card: card, dot: dot, st: st, bStart: bStart, bStop: bStop,
+          bLog: bLog, wrap: wrap, logbox: lb};
+}
+
 function render(data) {
   if (data.title) document.getElementById('title').textContent = data.title;
   var g = document.getElementById('grid');
-  g.innerHTML = '';
   data.services.forEach(function(s) {
     SVC[s.name] = s;
-    var open = !!logOpen[s.name];
+    var c = CARDS[s.name];
+    if (!c) { c = buildCard(s); CARDS[s.name] = c; g.appendChild(c.card); }
+    // 原地更新状态，不重建 DOM（日志展开时滚动位置/选中文本都不会丢）
+    c.dot.className = 'dot ' + (s.running ? 'on' : (s.deps_ok ? 'off' : 'warn'));
     var st = s.running ? '运行中' : (s.deps_ok ? '已停止' : '已停止(依赖未满足)');
-    var dot = s.running ? 'on' : (s.deps_ok ? 'off' : 'warn');
-    var card = document.createElement('div');
-    card.className = 'card';
-
-    var head = document.createElement('div'); head.className = 'head';
-    var tl = document.createElement('span'); tl.className = 'title';
-    var dotEl = document.createElement('span'); dotEl.className = 'dot ' + dot;
-    tl.appendChild(dotEl);
-    tl.appendChild(document.createTextNode(s.title));
-    var stsp = document.createElement('span'); stsp.className = 'st';
-    stsp.textContent = st + (s.pid ? '  pid ' + s.pid : '');
-    head.appendChild(tl); head.appendChild(stsp);
-    card.appendChild(head);
-
-    if (s.deps && s.deps.length) {
-      var dep = document.createElement('div'); dep.className = 'dep';
-      dep.textContent = '依赖: ' + s.deps.join(', ');
-      card.appendChild(dep);
-    }
-
-    var btns = document.createElement('div'); btns.className = 'btns';
-    var bStart = mkBtn('启动', 'start', svcStart, s.name); bStart.disabled = s.running;
-    var bStop = mkBtn('停止', 'stop', svcStop, s.name); bStop.disabled = !s.running;
-    var bLog = mkBtn(open ? '收起日志' : '查看日志', '', toggleLog, s.name);
-    btns.appendChild(bStart); btns.appendChild(bStop); btns.appendChild(bLog);
-    card.appendChild(btns);
-
-    var lb = document.createElement('div'); lb.className = 'logbox';
-    lb.id = 'log_' + s.name; lb.style.display = open ? 'block' : 'none';
-    card.appendChild(lb);
-
-    g.appendChild(card);
+    c.st.textContent = st + (s.pid ? '  pid ' + s.pid : '');
+    c.bStart.disabled = s.running;
+    c.bStop.disabled = !s.running;
+    var open = !!(logState[s.name] && logState[s.name].open);
+    c.bLog.textContent = open ? '收起日志' : '查看日志';
+    c.wrap.style.display = open ? 'block' : 'none';
     if (open) refreshLog(s.name);
   });
   document.getElementById('clock').textContent =
@@ -949,19 +1009,63 @@ function stopAll() {
   });
 }
 function toggleLog(n) {
-  logOpen[n] = !logOpen[n];
-  refresh();
+  var st = logState[n] || (logState[n] = {open: false, offset: null, pending: false});
+  st.open = !st.open;
+  var c = CARDS[n];
+  if (!c) return;
+  c.bLog.textContent = st.open ? '收起日志' : '查看日志';
+  c.wrap.style.display = st.open ? 'block' : 'none';
+  if (st.open) {
+    st.offset = null;          // 重新展开时全量取尾部，之后增量
+    refreshLog(n);
+  }
 }
-function refreshLog(n) {
+
+function copyLog(n) {
   var box = document.getElementById('log_' + n);
   if (!box) return;
-  fetch('/api/log?name=' + n + '&lines=200')
+  var text = box.textContent;
+  function fallback() {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(ta);
+    toast('日志已复制到剪贴板');
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(function() {
+      toast('日志已复制到剪贴板');
+    }, fallback);
+  } else {
+    fallback();
+  }
+}
+
+function refreshLog(n) {
+  var st = logState[n];
+  var box = document.getElementById('log_' + n);
+  if (!st || !st.open || !box || st.pending) return;
+  st.pending = true;
+  var q = '/api/log?name=' + n;
+  if (st.offset != null) q += '&offset=' + st.offset;
+  fetch(q)
     .then(function(r){ return r.json(); })
     .then(function(r) {
+      st.pending = false;
+      if (!r.ok) return;
       var atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
-      box.textContent = r.log || '(空)';
+      if (r.reset || st.offset == null) {
+        box.textContent = r.log || '(空)';        // 全量（首次 / 日志被截断）
+      } else if (r.log) {
+        box.appendChild(document.createTextNode(r.log));   // 只追加新增部分
+      }
+      st.offset = r.offset;
       if (atBottom) box.scrollTop = box.scrollHeight;
-    });
+    })
+    .catch(function(){ st.pending = false; });
 }
 
 /* ---------- 系统状态 / 端口 / 网络信息 ---------- */
