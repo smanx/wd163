@@ -26,6 +26,7 @@ RUN yum update -y openssl \
 # 游戏文件与数据
 COPY rootfs/home/1.6 /home/1.6
 COPY rootfs/var/lib/mysql /var/lib/mysql
+COPY rootfs/var/lib/mysql /opt/wdpanel/mysql-pristine
 COPY rootfs/etc/my.cnf /etc/my.cnf
 COPY app.py services.json /opt/wdpanel/
 

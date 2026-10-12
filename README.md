@@ -81,11 +81,12 @@ rootfs/
 └── var/lib/mysql/     # MySQL datadir（8 个 dl_* 库）
 ```
 
-构建与运行（**8160 必须映射，客户端进游戏走这个端口**；容器启动后自动拉起全部 7 个服务，无需任何手动步骤）：
+构建与运行（**8160 必须映射，客户端进游戏走这个端口**；容器启动后自动拉起全部 7 个服务，`-v` 挂载持久卷保证删容器不丢数据）：
 ```bash
 docker build -f Dockerfile.game -t wd163-server .
 docker run -d --name wd163 \
   -p 8080:8080 -p 8101:8101 -p 8160:8160 -p 3306:3306 -p 6666:6666 \
+  -v wd163-mysql:/var/lib/mysql \
   wd163-server
 # 不想自动启动服务时：docker run 时加 -e AUTO_START=0，再从网页面板手动启动
 ```
@@ -139,21 +140,18 @@ docker run -d --name wd163 -p 8080:8080 -p 8101:8101 -p 8160:8160 wd163-server
 
 **重要**：持久化 `/var/lib/mysql` 后，**重建容器无需重跑 `_fix_mysql.sh` 和 `_fixdbip*.sh`**（修复结果已在数据文件里），只需重新 docker cp `app.py` + 启动服务链。
 
-持久化操作（**推荐 named volume 或 WSL 原生路径，不要挂 /mnt/c**——Windows 盘的权限语义会让 mysqld 拒绝启动）：
+持久化操作（**推荐 named volume，不要挂 /mnt/c**——Windows 盘的权限语义会让 mysqld 拒绝启动）。
+镜像已内置原始数据库副本（`/opt/wdpanel/mysql-pristine`），**空卷挂载时入口脚本会自动初始化**，直接带卷运行即可：
 
 ```bash
-# ① 首次从镜像导出 datadir 做种子（镜像里已带提取好的数据）
-docker create --name seed wd163-server
-docker cp seed:/var/lib/mysql ./mysql-data
-docker rm seed
-chown -R 27:27 ./mysql-data          # 27 = CentOS6 mysql 用户的 uid
-
-# ② 带持久化运行
+# 带持久化运行（named volume：wd163-mysql）
 docker run -d --name wd163 \
-  -p 8080:8080 -p 8101:8101 -p 8160:8160 \
-  -v $(pwd)/mysql-data:/var/lib/mysql \
-  -v $(pwd)/panel-logs:/opt/wdpanel/logs \
+  -p 8080:8080 -p 8101:8101 -p 8160:8160 -p 3306:3306 -p 6666:6666 \
+  -v wd163-mysql:/var/lib/mysql \
   wd163-server
+
+# 卷已存在（非首次）则直接沿用其中数据；删除容器不丢数据，换镜像/换端口随意重建
+# 想彻底重置回初始数据：docker volume rm wd163-mysql 后再 run
 ```
 
 数据备份（建议定期执行）：
@@ -219,7 +217,9 @@ CI checkout 后即可构建，不需要上传 Release 附件或任何额外素�
 ```bash
 # 任意 x86 机器上（需 docker login ghcr.io，密码用 GitHub PAT，勾选 read:packages）
 docker pull ghcr.io/<用户名>/<仓库名>:latest
-docker run -d --name wd163 -p 8080:8080 -p 8101:8101 -p 8160:8160 \
+docker run -d --name wd163 \
+  -p 8080:8080 -p 8101:8101 -p 8160:8160 -p 3306:3306 -p 6666:6666 \
+  -v wd163-mysql:/var/lib/mysql \
   ghcr.io/<用户名>/<仓库名>:latest
 ```
 
