@@ -196,7 +196,44 @@ docker cp _start_chain.py wd163:/tmp/ && docker exec wd163 python /tmp/start_cha
 - 面板无鉴权，公网部署建议加反向代理 + 密码，或用防火墙限制 8080 来源 IP
 - 首次启动若 8101 bind 失败，多为 TIME_WAIT 残留，等 30 秒重试即可
 
-## 6. 实现要点
+## 6. CI 构建（GitHub Actions → ghcr.io）
+
+`.github/workflows/docker-image.yml` 提供**手动触发**的镜像构建流水线，
+构建后自动推送到 GitHub Container Registry。
+
+### 6.1 首次准备（一次性）
+
+`rootfs/`（约 227MB 游戏数据）不入 git，CI 从本仓库 **Release 附件**获取。上传方法：
+
+```bash
+cd C:\mydata\codes\wd163
+tar czf rootfs.tar.gz rootfs
+gh release create build-assets --title "构建素材" --notes "CI 用 rootfs 打包" rootfs.tar.gz
+```
+
+> 需要 gh CLI 已登录（`gh auth login`）。rootfs 内容有变化时，删掉旧附件重新上传即可。
+> 仓库建议设为 **Private**（含闭源游戏文件）。
+
+### 6.2 触发构建
+
+仓库页面 → **Actions** → **Build & Push Image** → **Run workflow**（可填 tag，默认 latest）。
+
+### 6.3 使用镜像
+
+```bash
+# 任意 x86 机器上（需 docker login ghcr.io，密码用 GitHub PAT，勾选 read:packages）
+docker pull ghcr.io/<用户名>/<仓库名>:latest
+docker run -d --name wd163 -p 8080:8080 -p 8101:8101 -p 8160:8160 \
+  ghcr.io/<用户名>/<仓库名>:latest
+```
+
+说明：
+- 仅构建 **linux/amd64**（游戏二进制是 ELF32 i386，ARM 只能 QEMU 模拟，见前述评估）
+- 构建缓存用 GitHub Actions Cache，第二次起 yum 层基本秒过
+- 首次推送后 ghcr 的包默认 **Private**，别的机器拉取前先 `docker login ghcr.io`
+- 数据不随镜像走：部署后按 5.3 节挂载持久化，启动链等按 5.5 节执行
+
+## 7. 实现要点
 
 - 服务进程以**独立进程组**（`setsid`）启动，停止时先 `SIGTERM` 整组、5 秒超时后 `SIGKILL`，
   再用 `pgrep -f <match>` 兜底清理，确保 magic_Linux32 的子进程不残留
@@ -207,7 +244,7 @@ docker cp _start_chain.py wd163:/tmp/ && docker exec wd163 python /tmp/start_cha
 - API：`GET /api/status`、`GET /api/sysinfo`、`GET /api/netinfo?all=0|1`、`GET /api/log?name=x&lines=200`、
   `POST /api/start|stop|start_all|stop_all`（body `{"name": "...", "force": false}`）
 
-## 7. 已验证（Windows 10/11 + WSL2 Docker + centos:6 容器内实测）
+## 8. 已验证（Windows 10/11 + WSL2 Docker + centos:6 容器内实测）
 
 - [x] 面板 HTTP 服务、状态监控、依赖拦截、日志查看（py2.6 容器内运行）
 - [x] 按顺序启动 7 个真实服务，GS 完全就绪（`Game server allows user to login now.`）

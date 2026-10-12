@@ -1,0 +1,71 @@
+name: Build & Push Image
+
+# 手动触发：Actions 页面 → Build & Push Image → Run workflow
+# 前提（一次性）：把 rootfs/ 打包上传到本仓库的 Release 附件，见 README「CI 构建」一节
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '镜像 tag（留空用 latest）'
+        required: false
+        default: 'latest'
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 计算镜像名（ghcr 要求全小写）
+        run: |
+          echo "IMAGE=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - name: 准备 rootfs 构建素材
+        run: |
+          if [ -d rootfs/home ] && [ -d rootfs/var ]; then
+            echo "本地仓库已有 rootfs，跳过下载"
+          else
+            echo "从本仓库 Release 下载 rootfs.tar.gz ..."
+            gh release download --repo "$GITHUB_REPOSITORY" \
+                --pattern "rootfs.tar.gz" --clobber --output rootfs.tar.gz
+            echo "解压中（约 227MB，需 1~2 分钟）..."
+            tar xzf rootfs.tar.gz
+            test -d rootfs/home/1.6 && test -d rootfs/var/lib/mysql || {
+              echo "::error::rootfs 内容不完整，请重新打包上传 Release 附件"; exit 1; }
+            rm -f rootfs.tar.gz
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and Push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.game
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ inputs.tag }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 输出镜像地址
+        run: echo "镜像已推送 → ${{ env.IMAGE }}:${{ inputs.tag }}"
