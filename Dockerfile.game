@@ -2,7 +2,8 @@
 # 前置：rootfs/ 已由 _wd163/_extract.py 提取完毕
 #
 # 构建:  docker build -f Dockerfile.game -t wd163-server .
-# 运行:  docker run -d --name wd163 -p 8080:8080 -p 8101:8101 -p 3306:3306 -p 6666:6666 wd163-server
+# 运行:  docker run -d --name wd163 -p 8080:8080 -p 8101:8101 -p 8160:8160 -p 3306:3306 -p 6666:6666 wd163-server
+#        （容器启动后自动拉起全部 7 个服务，无需任何手动步骤）
 
 FROM centos:6
 
@@ -34,10 +35,14 @@ RUN find /home/1.6 -name '*.ini' -o -name '*.cfg' | xargs sed -i 's/192\.168\.20
  && chown -R mysql:mysql /var/lib/mysql \
  && chmod +x /home/1.6/*/magic_Linux32 /home/1.6/1/driver 2>/dev/null; true
 
-# 面板配置
+# 运维脚本与面板配置（AUTO_START=1：容器启动后自动按依赖顺序拉起全部 7 个服务）
+COPY _start_chain.py _entrypoint.sh /opt/wdpanel/
+RUN chmod +x /opt/wdpanel/_entrypoint.sh
+
 ENV PANEL_PORT=8080 \
     SERVICES_CONF=/opt/wdpanel/services.json \
-    LOG_DIR=/opt/wdpanel/logs
+    LOG_DIR=/opt/wdpanel/logs \
+    AUTO_START=1
 
 EXPOSE 8080 8101 3306 6666 8160
-CMD ["python", "/opt/wdpanel/app.py"]
+ENTRYPOINT ["/opt/wdpanel/_entrypoint.sh"]

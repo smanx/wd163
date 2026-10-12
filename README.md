@@ -52,10 +52,11 @@ wd-panel/
 }
 ```
 
-## 3. 运维脚本说明（在容器内执行）
+## 3. 运维脚本说明（容器内已内置 _start_chain.py，其余按需 docker cp）
 
 ```bash
-docker cp _start_chain.py wd163:/tmp/ && docker exec wd163 python /tmp/start_chain.py   # 按依赖顺序启动全部服务
+docker exec wd163 python /opt/wdpanel/_start_chain.py            # 按依赖顺序启动全部服务（AUTO_START=1 时容器启动会自动执行，无需手动）
+docker cp _restart_all.py wd163:/tmp/ && docker exec wd163 python /tmp/restart_all.py   # 重启全部服务
 docker cp _restart_all.py wd163:/tmp/ && docker exec wd163 python /tmp/restart_all.py   # 重启全部服务
 docker cp _fix_mysql.sh  wd163:/tmp/ && docker exec wd163 bash /tmp/_fix_mysql.sh       # 重置 MySQL root 密码（仅数据未持久化时需要）
 docker cp _findip.sh _fixdbip.sh _fixdbip2.sh wd163:/tmp/                                # 扫描/修复注册表老 IP（仅数据未持久化时需要）
@@ -80,12 +81,13 @@ rootfs/
 └── var/lib/mysql/     # MySQL datadir（8 个 dl_* 库）
 ```
 
-构建与运行（**8160 必须映射，客户端进游戏走这个端口**）：
+构建与运行（**8160 必须映射，客户端进游戏走这个端口**；容器启动后自动拉起全部 7 个服务，无需任何手动步骤）：
 ```bash
 docker build -f Dockerfile.game -t wd163-server .
 docker run -d --name wd163 \
   -p 8080:8080 -p 8101:8101 -p 8160:8160 -p 3306:3306 -p 6666:6666 \
   wd163-server
+# 不想自动启动服务时：docker run 时加 -e AUTO_START=0，再从网页面板手动启动
 ```
 
 然后在网页上按顺序启动：**mysqld → driver → aaa → dba → ccs → csa → gs**
@@ -182,8 +184,8 @@ docker cp app.py wd163:/opt/wdpanel/app.py && docker restart wd163
 #    docker cp _fix_mysql.sh wd163:/tmp/ && docker exec wd163 bash /tmp/_fix_mysql.sh
 #    docker cp _findip.sh _fixdbip.sh _fixdbip2.sh（修复注册表老 IP 192.168.200.128）
 
-# 3. 启动服务链
-docker cp _start_chain.py wd163:/tmp/ && docker exec wd163 python /tmp/start_chain.py
+# 3. 启动服务链（AUTO_START=1 时容器启动已自动完成，此步可跳过）
+docker exec wd163 python /opt/wdpanel/_start_chain.py
 
 # 4. 按 5.2 验证清单复查
 ```
