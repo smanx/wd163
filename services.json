@@ -1,0 +1,78 @@
+{
+  "title": "问道 1.63 服务端控制面板",
+  "services": [
+    {
+      "name": "mysqld",
+      "title": "MySQL 5.1 数据库 (3306)",
+      "deps": [],
+      "dir": "/",
+      "start": "exec mysqld_safe --user=mysql",
+      "match": "mysqld",
+      "log": "mysqld.log"
+    },
+    {
+      "name": "driver",
+      "title": "Driver 驱动/管理服务 (6666)",
+      "deps": [],
+      "dir": "/home/1.6/1",
+      "start": "exec ./driver -r service -o auth_srv.o -e pwd.o -w awk_pwdi -p 6666",
+      "match": "auth_srv\\.o",
+      "log": "driver.log"
+    },
+    {
+      "name": "aaa",
+      "title": "AAA 账号认证 (客户端入口 8101)",
+      "deps": ["mysqld"],
+      "dir": "/home/1.6/aaa",
+      "start": "bash runaaa",
+      "match": "magic_Linux32.*/aaa/",
+      "log": "aaa.log"
+    },
+    {
+      "name": "dba",
+      "title": "DBA 数据库代理",
+      "deps": ["mysqld", "aaa"],
+      "dir": "/home/1.6/dba",
+      "start": "bash rundba",
+      "match": "magic_Linux32.*/dba/",
+      "log": "dba.log"
+    },
+    {
+      "name": "ccs",
+      "title": "CCS 中心服务",
+      "deps": ["mysqld", "aaa", "dba"],
+      "dir": "/home/1.6/ccs",
+      "start": "bash runccs",
+      "match": "magic_Linux32.*/ccs/",
+      "log": "ccs.log"
+    },
+    {
+      "name": "csa",
+      "title": "CSA 场景服务",
+      "deps": ["mysqld", "aaa", "dba"],
+      "dir": "/home/1.6/csa",
+      "start": "bash runcsa",
+      "match": "magic_Linux32.*/csa/",
+      "log": "csa.log"
+    },
+    {
+      "name": "gs",
+      "title": "GS 游戏服务 (一线)",
+      "deps": ["mysqld", "aaa", "dba", "ccs", "csa"],
+      "dir": "/home/1.6/gs",
+      "start": "bash rungs",
+      "match": "magic_Linux32.*/gs/",
+      "log": "gs.log"
+    }
+  ],
+  "ports": [
+    {"port": 8080, "name": "Web 控制面板", "level": "required"},
+    {"port": 8101, "name": "AAA 账号认证 · 客户端登录入口", "level": "required"},
+    {"port": 8160, "name": "GS 游戏服务 · 客户端连接(一线)", "level": "required"},
+    {"port": 3306, "name": "MySQL 数据库 · 外部管理工具用", "level": "optional"},
+    {"port": 6666, "name": "Driver 驱动/管理服务", "level": "optional"},
+    {"port": 8110, "name": "CCS 中心服务 · 内部互联", "level": "internal"},
+    {"port": 8120, "name": "DBA 数据库代理 · 内部互联", "level": "internal"},
+    {"port": 6101, "name": "CSA 场景服务 · 内部互联", "level": "internal"}
+  ]
+}

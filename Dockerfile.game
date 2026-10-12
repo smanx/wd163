@@ -1,0 +1,43 @@
+# wd-panel 游戏服务端镜像（centos:6 复刻原环境）
+# 前置：rootfs/ 已由 _wd163/_extract.py 提取完毕
+#
+# 构建:  docker build -f Dockerfile.game -t wd163-server .
+# 运行:  docker run -d --name wd163 -p 8080:8080 -p 8101:8101 -p 3306:3306 -p 6666:6666 wd163-server
+
+FROM centos:6
+
+# CentOS 6 已 EOL，yum 源指向阿里云 centos-vault 归档（vault.centos.org 对 6.x 已 403）
+RUN printf '[base]\nname=CentOS-6.10 - Base\nbaseurl=https://mirrors.aliyun.com/centos-vault/6.10/os/$basearch/\ngpgcheck=0\nenabled=1\n\n[updates]\nname=CentOS-6.10 - Updates\nbaseurl=https://mirrors.aliyun.com/centos-vault/6.10/updates/$basearch/\ngpgcheck=0\nenabled=1\n\n[extras]\nname=CentOS-6.10 - Extras\nbaseurl=https://mirrors.aliyun.com/centos-vault/6.10/extras/$basearch/\ngpgcheck=0\nenabled=1\n' \
+        > /etc/yum.repos.d/CentOS-Base.repo \
+ && rm -f /etc/yum.repos.d/epel*.repo /etc/yum.repos.d/CentOS-Base.repo.rpmsave
+
+# 基础依赖 + 游戏程序（ELF32 i386）所需的 32 位运行库 + mysql-server 5.1
+# 先升级 openssl 解决 multilib 版本不一致（镜像自带 57，updates 里的 i686 是 58）
+RUN yum update -y openssl \
+ && yum install -y \
+        python \
+        procps psmisc tar \
+        glibc.i686 libstdc++.i686 zlib.i686 ncurses-libs.i686 \
+        libgcc.i686 mysql-libs.i686 openssl.i686 \
+        mysql-server mysql \
+    && yum clean all
+
+# 游戏文件与数据
+COPY rootfs/home/1.6 /home/1.6
+COPY rootfs/var/lib/mysql /var/lib/mysql
+COPY rootfs/etc/my.cnf /etc/my.cnf
+COPY app.py services.json /opt/wdpanel/
+
+# 1) 全部组件与 MySQL 同容器，ini 里的原 VM IP 改为 127.0.0.1
+# 2) 数据目录属主
+RUN find /home/1.6 -name '*.ini' -o -name '*.cfg' | xargs sed -i 's/192\.168\.200\.128/127.0.0.1/g' \
+ && chown -R mysql:mysql /var/lib/mysql \
+ && chmod +x /home/1.6/*/magic_Linux32 /home/1.6/1/driver 2>/dev/null; true
+
+# 面板配置
+ENV PANEL_PORT=8080 \
+    SERVICES_CONF=/opt/wdpanel/services.json \
+    LOG_DIR=/opt/wdpanel/logs
+
+EXPOSE 8080 8101 3306 6666 8160
+CMD ["python", "/opt/wdpanel/app.py"]

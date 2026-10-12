@@ -1,0 +1,13 @@
+# 构建素材：游戏服务端+MySQL 数据（386MB，含闭源程序，不入库）
+rootfs/
+
+# 运行时产物
+logs/
+__pycache__/
+*.pyc
+*.log
+.panel_state.json
+
+# 系统/编辑器
+.DS_Store
+Thumbs.db
