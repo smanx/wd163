@@ -72,8 +72,8 @@ docker cp _findip.sh _fixdbip.sh _fixdbip2.sh wd163:/tmp/                       
 
 ## 4. 游戏服务端镜像（生产）
 
-前提：把 VMware 磁盘里的文件提取到 `rootfs/`（提取脚本基于
-`../_wd163/_vmdk.py + _extfs.py`，可全量导出）：
+前提：`rootfs/` 已包含从 VMware 磁盘提取的全部文件（原始提取脚本基于
+`../_wd163/_vmdk.py + _extfs.py`），且已直接入库——**克隆仓库即可构建，无需任何额外准备**：
 
 ```
 rootfs/
@@ -203,17 +203,11 @@ docker exec wd163 python /opt/wdpanel/_start_chain.py
 `.github/workflows/docker-image.yml` 提供**手动触发**的镜像构建流水线，
 构建后自动推送到 GitHub Container Registry。
 
-### 6.1 首次准备（一次性）
+### 6.1 说明
 
-`rootfs/`（约 227MB 游戏数据）不入 git，CI 从本仓库 **Release 附件**获取。上传方法：
+`rootfs/`（约 227MB 游戏数据，无单文件超过 GitHub 100MB 限制）**已直接提交到仓库**，
+CI checkout 后即可构建，不需要上传 Release 附件或任何额外素材。
 
-```bash
-cd C:\mydata\codes\wd163
-tar czf rootfs.tar.gz rootfs
-gh release create build-assets --title "构建素材" --notes "CI 用 rootfs 打包" rootfs.tar.gz
-```
-
-> 需要 gh CLI 已登录（`gh auth login`）。rootfs 内容有变化时，删掉旧附件重新上传即可。
 > 仓库建议设为 **Private**（含闭源游戏文件）。
 
 ### 6.2 触发构建

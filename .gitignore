@@ -1,5 +1,4 @@
-# 构建素材：游戏服务端+MySQL 数据（386MB，含闭源程序，不入库）
-rootfs/
+# rootfs/ 游戏服务端+MySQL 数据已直接入库（共 227MB，无单文件超 GitHub 100MB 限制）
 
 # 运行时产物
 logs/
