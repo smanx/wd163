@@ -780,7 +780,7 @@ HTML = u"""<!DOCTYPE html>
   </div>
   <div class="card">
     <h2>外部端口配置</h2>
-    <table><thead><tr><th>端口</th><th>用途</th><th>外部映射</th><th>监听</th></tr></thead>
+    <table><thead><tr><th>端口</th><th>用途</th><th>外部映射</th><th>运行状态</th></tr></thead>
     <tbody id="portbody"><tr><td colspan="4" style="color:#999">加载中…</td></tr></tbody></table>
     <div class="hint" id="porthint"></div>
   </div>
@@ -1131,8 +1131,8 @@ function renderPorts(listen) {
     if (p.level === 'required' || p.level === 'optional') need.push(p.port);
     html += '<tr><td class="num">' + p.port + '</td><td>' + esc(p.name) + '</td>'
           + '<td><span class="badge ' + lv[1] + '">' + lv[0] + '</span></td>'
-          + '<td>' + (on ? '<span style="color:#15803d">监听中</span>'
-                        : '<span style="color:#b91c1c">未监听</span>') + '</td></tr>';
+          + '<td>' + (on ? '<span style="color:#15803d">运行中</span>'
+                        : '<span style="color:#b91c1c">未运行</span>') + '</td></tr>';
   });
   document.getElementById('portbody').innerHTML = html;
   document.getElementById('porthint').textContent =
